@@ -11,7 +11,8 @@ class Sender:
         self.log("Sender starting up using port %s" % self.port)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
-        self.waiting = False
+        self.packetsAwaitingResponse = 0
+        self.windowSize = 2
 
         self.remote_host = None
         self.remote_port = None
@@ -43,7 +44,7 @@ class Sender:
     def run(self):
         seq = 0
         while True:
-            sockets = [self.socket, sys.stdin] if not self.waiting else [self.socket]
+            sockets = [self.socket, sys.stdin] if not (self.packetsAwaitingResponse >= self.windowSize) else [self.socket]
 
             socks = select.select(sockets, [], [], 0.1)[0]
             for conn in socks:
@@ -51,7 +52,7 @@ class Sender:
                     data = self.recv(conn)
 
                     if data:
-                        self.waiting = False
+                        self.packetsAwaitingResponse -= 1
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
                     if len(data) == 0:
@@ -60,7 +61,7 @@ class Sender:
 
                     msg = { "type": "msg", "data": data, "seq": seq }
                     self.send(msg)
-                    self.waiting = True
+                    self.packetsAwaitingResponse += 1
                     seq += 1
 
         return
