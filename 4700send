@@ -56,8 +56,11 @@ class Sender:
                 elif conn == sys.stdin:
                     data = sys.stdin.read(DATA_SIZE)
                     if len(data) == 0:
-                        self.log("All done!")
-                        sys.exit(0)
+                        if self.packetsAwaitingResponse == 0:
+                            self.log("All done!")
+                            sys.exit(0)
+                        else:
+                            continue # keep looping until there are no outstanding messages awaiting ack
 
                     msg = { "type": "msg", "data": data, "seq": seq }
                     self.send(msg)
