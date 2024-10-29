@@ -15,6 +15,9 @@ class Receiver:
         self.recievedSequenceNums = []
         self.recievedData = []
 
+        self.buffer = {}
+        self.next_expected_seq = 0 
+
     def send(self, message):
         self.log("Sent message %s" % json.dumps(message))
         self.socket.sendto(json.dumps(message).encode("utf-8"), (self.remote_host, self.remote_port))
@@ -46,14 +49,29 @@ class Receiver:
                 msg = self.recv(conn)
 
                 if msg:
-                    if (msg["seq"] not in self.recievedSequenceNums and msg['data'] not in self.recievedData):
+                    seq_num = msg["seq"]
+                    data = msg["data"]
+                    if (seq_num not in self.recievedSequenceNums and data not in self.recievedData):
                         self.recievedSequenceNums.append(msg['seq'])
-                        self.recievedData.append(msg['data'])
+                        self.recievedData.append(data)
                         self.lastSeqNum = msg['seq']
+
+                        if seq_num == self.next_expected_seq:
                         # Print out the data to stdout only if not duplicate
-                        print(msg["data"], end='', flush=True)
+                            print(data, end='', flush=True)
+                            self.next_expected_seq += 1
+
+                            while self.next_expected_seq in self.buffer:
+                                print(self.buffer[self.next_expected_seq], end='', flush=True)
+                                del self.buffer[self.next_expected_seq]
+                                self.next_expected_seq += 1
+
+                        elif seq_num not in self.buffer:
+                        # Buffer the out-of-order packet
+                            self.buffer[seq_num] = data
+
                         # Always send back an ack
-                        self.send({ "type": "ack", "seq": msg["seq"] })
+                        self.send({ "type": "ack", "seq": seq_num })
         return
 
 if __name__ == "__main__":
