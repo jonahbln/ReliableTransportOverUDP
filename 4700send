@@ -67,8 +67,7 @@ class Sender:
 
                     msg = { "type": "msg", "data": data, "seq": seq}
                     self.send(msg)
-                    msg["time"] = time.time()
-                    self.packetsAwaitingResponse.append(msg)
+                    self.packetsAwaitingResponse.append((msg,time.time()))
                     seq += 1
 
             # Check for incoming ACKs
@@ -84,7 +83,7 @@ class Sender:
 
                         # Update congestion control parameters
                         for packet in self.packetsAwaitingResponse:
-                            if packet['seq'] == ack_seq:
+                            if packet[0]['seq'] == ack_seq:
                                 self.log(f"Removing packet from awaitingResponse with seq num: {ack_seq}")
                                 self.packetsAwaitingResponse.remove(packet)
                         if self.cwnd < self.ssthresh:
@@ -99,10 +98,12 @@ class Sender:
     
     def resendLostPackets(self):
         for packet in self.packetsAwaitingResponse:
-            if time.time() - packet["time"] > self.ttl:
-                packet['time'] = time.time()
-                self.send(packet)
-                print("Resending message with seq:" + str(packet['seq']))
+            if time.time() - packet[1] > self.ttl:
+                y = list(packet)
+                y[1] = time.time()
+                packet = y
+                self.send(packet[0])
+                print("Resending message with seq:" + str(packet[0]['seq']))
         return
 
 if __name__ == "__main__":
