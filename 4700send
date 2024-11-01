@@ -11,12 +11,15 @@ class Sender:
         self.log("Sender starting up using port %s" % self.port)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind(('0.0.0.0', 0))
-        self.packetsAwaitingResponse = 0
+
+        self.packetsAwaitingResponse = []
 
         # Window Size, Slow Start Threshold, and the congestion window variables
         self.windowSize = 1
-        self.ssthresh = 16  
+        self.ssthresh = 16
         self.cwnd = 1  
+
+        self.ttl = 1.0
 
         self.remote_host = None
         self.remote_port = None
@@ -48,54 +51,58 @@ class Sender:
     def run(self):
         seq = 0
         while True:
-            sockets = [self.socket, sys.stdin] if not (self.packetsAwaitingResponse >= self.windowSize) else [self.socket]
-
-            socks = select.select(sockets, [], [], 0.1)[0]
-            for conn in socks:
-                if conn == self.socket:
-                    data = self.recv(conn)
-
-                    if data:
-                        self.packetsAwaitingResponse -= 1
-                elif conn == sys.stdin:
+            # first check if there are any packets living beyond the ttl with no ack
+            self.resendLostPackets()
+            # send data if possible
+            if not (len(self.packetsAwaitingResponse) >= self.windowSize):
+                socks = select.select([sys.stdin], [], [], 0.1)[0]
+                for conn in socks:
                     data = sys.stdin.read(DATA_SIZE)
                     if len(data) == 0:
-                        if self.packetsAwaitingResponse == 0:
+                        if len(self.packetsAwaitingResponse) == 0:
                             self.log("All done!")
                             sys.exit(0)
                         else:
                             continue # keep looping until there are no outstanding messages awaiting ack
 
-                    msg = { "type": "msg", "data": data, "seq": seq }
+                    msg = { "type": "msg", "data": data, "seq": seq}
                     self.send(msg)
-                    self.packetsAwaitingResponse += 1
+                    msg["time"] = time.time()
+                    self.packetsAwaitingResponse.append(msg)
                     seq += 1
 
             # Check for incoming ACKs
             socks = select.select([self.socket], [], [], 0.1)[0]
             for conn in socks:
-                if conn == self.socket:
-                    data = self.recv(conn)
+                data = self.recv(conn)
 
-                    if data:
-                        # Handle ACKs
-                        if data["type"] == "ack":
-                            ack_seq = data["seq"]
-                            self.log(f"Received ACK for packet {ack_seq}")
+                if data:
+                    # Handle ACKs
+                    if data["type"] == "ack":
+                        ack_seq = data["seq"]
+                        self.log(f"Received ACK for packet {ack_seq}")
 
-                            # Update congestion control parameters
-                            self.packetsAwaitingResponse -= 1
+                        # Update congestion control parameters
+                        for packet in self.packetsAwaitingResponse:
+                            if packet['seq'] == ack_seq:
+                                self.log(f"Removing packet from awaitingResponse with seq num: {ack_seq}")
+                                self.packetsAwaitingResponse.remove(packet)
+                        if self.cwnd < self.ssthresh:
+                            # Slow start phase (exponential growth)
+                            self.cwnd += 1
+                        else:
+                            # Congestion avoidance phase (linear growth)
+                            self.cwnd += 1 / self.cwnd
 
-                            if self.cwnd < self.ssthresh:
-                                # Slow start phase (exponential growth)
-                                self.cwnd += 1
-                            else:
-                                # Congestion avoidance phase (linear growth)
-                                self.cwnd += 1 / self.cwnd
-
-                            self.windowSize = int(self.cwnd)
-
-
+                        self.windowSize = int(self.cwnd)
+        return
+    
+    def resendLostPackets(self):
+        for packet in self.packetsAwaitingResponse:
+            if time.time() - packet["time"] > self.ttl:
+                packet['time'] = time.time()
+                self.send(packet)
+                print("Resending message with seq:" + str(packet['seq']))
         return
 
 if __name__ == "__main__":
