@@ -19,7 +19,8 @@ class Sender:
         self.ssthresh = 16
         self.cwnd = 1  
 
-        self.ttl = 1.0
+        # the round trip time of a single packet/ack
+        self.rtt = 1.0
 
         self.remote_host = None
         self.remote_port = None
@@ -79,26 +80,35 @@ class Sender:
                     # Handle ACKs
                     if data["type"] == "ack":
                         ack_seq = data["seq"]
+                        ack_time = time.time()
                         self.log(f"Received ACK for packet {ack_seq}")
-
+                        found = False
                         # Update congestion control parameters
                         for packet in self.packetsAwaitingResponse:
                             if packet[0]['seq'] == ack_seq:
-                                self.log(f"Removing packet from awaitingResponse with seq num: {ack_seq}")
-                                self.packetsAwaitingResponse.remove(packet)
-                        if self.cwnd < self.ssthresh:
-                            # Slow start phase (exponential growth)
-                            self.cwnd += 1
-                        else:
-                            # Congestion avoidance phase (linear growth)
-                            self.cwnd += 1 / self.cwnd
+                                found = True
+                                print("OLD RTT: " + str(self.rtt))
+                                # averages out the old rtt with the rtt of the incoming ack-ed packet
+                                self.rtt = ((ack_time - packet[1]) + self.rtt) / 2
+                                print(" NEW RTT: " + str(self.rtt))
+                                if self.cwnd < self.ssthresh:
+                                    # Slow start phase (exponential growth)
+                                    self.cwnd += 1
+                                else:
+                                    # Congestion avoidance phase (linear growth)
+                                    self.cwnd += 1 / self.cwnd
 
-                        self.windowSize = int(self.cwnd)
+                                self.windowSize = int(self.cwnd)
+                                self.packetsAwaitingResponse.remove(packet)
+                                break
+                        if not found:
+                            print("DUPLICATE ACK WITH SEQ: " + str(ack_seq))
+    
         return
     
     def resendLostPackets(self):
         for packet in self.packetsAwaitingResponse:
-            if time.time() - packet[1] > self.ttl:
+            if time.time() - packet[1] > (self.rtt * 2):
                 y = list(packet)
                 y[1] = time.time()
                 packet = y
