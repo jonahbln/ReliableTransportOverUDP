@@ -89,7 +89,7 @@ class Sender:
                                 found = True
                                 print("OLD RTT: " + str(self.rtt))
                                 # averages out the old rtt with the rtt of the incoming ack-ed packet
-                                self.rtt = ((ack_time - packet[1]) + self.rtt) / 2
+                                self.rtt = (((ack_time - packet[1]) * 0.85) + (self.rtt * 0.15))
                                 print(" NEW RTT: " + str(self.rtt))
                                 if self.cwnd < self.ssthresh:
                                     # Slow start phase (exponential growth)
