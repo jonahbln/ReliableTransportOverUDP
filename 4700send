@@ -65,6 +65,7 @@ class Sender:
                 for conn in socks:
                     data = sys.stdin.read(DATA_SIZE)
                     if len(data) == 0:
+                        # only quit out if no packets are left unacknoledged
                         if len(self.packetsAwaitingResponse) == 0:
                             self.log("All done!")
                             sys.exit(0)
@@ -73,6 +74,7 @@ class Sender:
 
                     msg = {"type": "msg", "data": data, "seq": seq}
                     self.send(msg)
+                    # send packet and add it to the unacknoledged list
                     self.packetsAwaitingResponse.append((msg, time.time()))
                     seq += 1
 
@@ -98,7 +100,6 @@ class Sender:
                         if self.ack_count[ack_seq] == 3:
                             self.cwnd = max(1, self.cwnd // 2)  # Halve the window size directly
                             self.windowSize = self.cwnd
-                            print(f"Fast retransmit triggered for packet {ack_seq}")
                             continue
 
                         found = False
@@ -135,25 +136,20 @@ class Sender:
                                 self.packetsAwaitingResponse.remove(packet)
                                 break
 
-                        # Handle new RTT and bandwidth updates
-                        print(f"New RTT: {self.rtt}, CWND: {self.cwnd}, Window Size: {self.windowSize}")
-
         return
     
     def resendLostPackets(self):
         # Retransmit packets that have timed out
         for i, packet in enumerate(self.packetsAwaitingResponse):
-            if time.time() - packet[1] > (self.rtt * 2): 
+            if time.time() - packet[1] > (self.rtt * 2): # check if a packet has been unacknoledged for more than 2 x rtt
                 self.cwnd = max(1, self.cwnd // 2)  
                 self.windowSize = self.cwnd
                 y = list(packet)
-                y[1] = time.time()
+                y[1] = time.time() # update the time that the pakcet was sent out
                 newPacket = tuple(y)
                 self.packetsAwaitingResponse[i] = newPacket
-
+                # resend the packet
                 self.send(newPacket[0])
-                
-                print(f"Resending message with seq: {packet[0]['seq']}, Window size adjusted to {self.windowSize}")
         return
 
 if __name__ == "__main__":
