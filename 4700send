@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python3 -u
 
-import argparse, socket, time, json, select, struct, sys, math
+import argparse, socket, time, json, select, sys
 
 DATA_SIZE = 1375
 
@@ -13,14 +13,18 @@ class Sender:
         self.socket.bind(('0.0.0.0', 0))
 
         self.packetsAwaitingResponse = []
+        # dictionary to track recieved ACKs
+        self.ack_count = {} 
 
-        # Window Size, Slow Start Threshold, and the congestion window variables
-        self.windowSize = 1
+        # Window Size, Slow Start Threshold, and congestion control variables
+        self.windowSize = 2  
         self.ssthresh = 16
-        self.cwnd = 1  
+        self.cwnd = 2 
 
-        # the round trip time of a single packet/ack
+        # RTT and bandwidth tracking
         self.rtt = 1.0
+        self.rttArray = []
+        self.bandwidthArray = []
 
         self.remote_host = None
         self.remote_port = None
@@ -43,7 +47,7 @@ class Sender:
 
         # Make sure we're talking to the same remote host
         if addr != (self.remote_host, self.remote_port):
-            self.log("Error:  Received response from unexpected remote; ignoring")
+            self.log("Error: Received response from unexpected remote; ignoring")
             return None
         else:
             self.log("Received message %s" % data)
@@ -52,10 +56,11 @@ class Sender:
     def run(self):
         seq = 0
         while True:
-            # first check if there are any packets living beyond the ttl with no ack
+            # Check for packets that have timed out
             self.resendLostPackets()
-            # send data if possible
-            if not (len(self.packetsAwaitingResponse) >= self.windowSize):
+
+            # Send data if window permits
+            if len(self.packetsAwaitingResponse) < self.windowSize:
                 socks = select.select([sys.stdin], [], [], 0.1)[0]
                 for conn in socks:
                     data = sys.stdin.read(DATA_SIZE)
@@ -64,11 +69,11 @@ class Sender:
                             self.log("All done!")
                             sys.exit(0)
                         else:
-                            continue # keep looping until there are no outstanding messages awaiting ack
+                            continue
 
-                    msg = { "type": "msg", "data": data, "seq": seq}
+                    msg = {"type": "msg", "data": data, "seq": seq}
                     self.send(msg)
-                    self.packetsAwaitingResponse.append((msg,time.time()))
+                    self.packetsAwaitingResponse.append((msg, time.time()))
                     seq += 1
 
             # Check for incoming ACKs
@@ -82,38 +87,73 @@ class Sender:
                         ack_seq = data["seq"]
                         ack_time = time.time()
                         self.log(f"Received ACK for packet {ack_seq}")
+
+                        # Track the count of each ACK
+                        if ack_seq in self.ack_count:
+                            self.ack_count[ack_seq] += 1
+                        else:
+                            self.ack_count[ack_seq] = 1
+
+                        # Check for 3 duplicate ACKs
+                        if self.ack_count[ack_seq] == 3:
+                            self.cwnd = max(1, self.cwnd // 2)  # Halve the window size directly
+                            self.windowSize = self.cwnd
+                            print(f"Fast retransmit triggered for packet {ack_seq}")
+                            continue
+
                         found = False
                         # Update congestion control parameters
                         for packet in self.packetsAwaitingResponse:
                             if packet[0]['seq'] == ack_seq:
                                 found = True
-                                print("OLD RTT: " + str(self.rtt))
-                                # averages out the old rtt with the rtt of the incoming ack-ed packet
-                                self.rtt = (((ack_time - packet[1]) * 0.85) + (self.rtt * 0.15))
-                                print(" NEW RTT: " + str(self.rtt))
+                                rtt_sample = ack_time - packet[1]
+
+                                # **RTT Calculation** using weighted average (Karn’s algorithm)
+                                self.rtt = (0.85 * rtt_sample) + (0.15 * self.rtt)
+
+                                # Track RTT and bandwidth samples
+                               # self.rttArray = (self.rttArray + [self.rtt])[-10:]
+                               # bandwidth_sample = DATA_SIZE / rtt_sample
+                               # self.bandwidthArray = (self.bandwidthArray + [bandwidth_sample])[-10:]
+                                # **Calculate bottleneck bandwidth and RTprop**
+                                #bottleNeckBandwidth = max(self.bandwidthArray)
+                                #rtProp = min(self.rttArray)
+                               # BDP = bottleNeckBandwidth * rtProp  # Bandwidth-Delay Product
+
+                                # **Window size adjustment based on bandwidth and RTT**
                                 if self.cwnd < self.ssthresh:
-                                    # Slow start phase (exponential growth)
+                                    # Slow start phase 
                                     self.cwnd += 1
                                 else:
                                     # Congestion avoidance phase (linear growth)
                                     self.cwnd += 1 / self.cwnd
 
+                               # Limit cwnd to 2 * BDP
+                               # self.cwnd = min(self.cwnd, 2 * BDP)
+
                                 self.windowSize = int(self.cwnd)
                                 self.packetsAwaitingResponse.remove(packet)
                                 break
-                        if not found:
-                            print("DUPLICATE ACK WITH SEQ: " + str(ack_seq))
-    
+
+                        # Handle new RTT and bandwidth updates
+                        print(f"New RTT: {self.rtt}, CWND: {self.cwnd}, Window Size: {self.windowSize}")
+
         return
     
     def resendLostPackets(self):
-        for packet in self.packetsAwaitingResponse:
-            if time.time() - packet[1] > (self.rtt * 2):
+        # Retransmit packets that have timed out
+        for i, packet in enumerate(self.packetsAwaitingResponse):
+            if time.time() - packet[1] > (self.rtt * 2): 
+                self.cwnd = max(1, self.cwnd // 2)  
+                self.windowSize = self.cwnd
                 y = list(packet)
                 y[1] = time.time()
-                packet = y
-                self.send(packet[0])
-                print("Resending message with seq:" + str(packet[0]['seq']))
+                newPacket = tuple(y)
+                self.packetsAwaitingResponse[i] = newPacket
+
+                self.send(newPacket[0])
+                
+                print(f"Resending message with seq: {packet[0]['seq']}, Window size adjusted to {self.windowSize}")
         return
 
 if __name__ == "__main__":
