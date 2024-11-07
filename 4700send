@@ -109,28 +109,16 @@ class Sender:
                                 found = True
                                 rtt_sample = ack_time - packet[1]
 
-                                # **RTT Calculation** using weighted average (Karn’s algorithm)
+                                # RTT Calculation using weighted average
                                 self.rtt = (0.85 * rtt_sample) + (0.15 * self.rtt)
 
-                                # Track RTT and bandwidth samples
-                               # self.rttArray = (self.rttArray + [self.rtt])[-10:]
-                               # bandwidth_sample = DATA_SIZE / rtt_sample
-                               # self.bandwidthArray = (self.bandwidthArray + [bandwidth_sample])[-10:]
-                                # **Calculate bottleneck bandwidth and RTprop**
-                                #bottleNeckBandwidth = max(self.bandwidthArray)
-                                #rtProp = min(self.rttArray)
-                               # BDP = bottleNeckBandwidth * rtProp  # Bandwidth-Delay Product
-
-                                # **Window size adjustment based on bandwidth and RTT**
+                                # Window size adjustment based on bandwidth and RTT
                                 if self.cwnd < self.ssthresh:
                                     # Slow start phase 
                                     self.cwnd += 1
                                 else:
                                     # Congestion avoidance phase (linear growth)
                                     self.cwnd += 1 / self.cwnd
-
-                               # Limit cwnd to 2 * BDP
-                               # self.cwnd = min(self.cwnd, 2 * BDP)
 
                                 self.windowSize = int(self.cwnd)
                                 self.packetsAwaitingResponse.remove(packet)
